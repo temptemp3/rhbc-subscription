@@ -2,3 +2,8 @@ build
 reach
 .reach
 .env
+.secret
+node_modules
+truffle
+.DS_Store
+script

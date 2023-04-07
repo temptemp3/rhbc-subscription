@@ -1,122 +1,639 @@
 import { loadStdlib } from "@reach-sh/stdlib";
-import assert from "assert";
+import * as l1Backend from "./build/index.L1.mjs";
+import * as l2Backend from "./build/index.L2.mjs";
+import * as l3Backend from "./build/index.L3.mjs";
+const stdlib = loadStdlib(process.env);
 
-const [, , infile] = process.argv;
+const erc20ABIHelper = (erc20ABI, ctcInfo) => ({
+  getAllowance: async (address) => {
+    console.log("Getting allowance for", address);
+    const allowance = await erc20ABI.allowance(address, ctcInfo);
+    console.log({ allowance });
+    return allowance;
+  },
+  doApprove: async (address, amount) => {
+    console.log(
+      `Address ${address} is approving ${ctcInfo} to spend up to ${amount} Zorkmids.}`
+    );
+    const t = await erc20ABI.approve(ctcInfo, amount);
+    console.log("+ Step 1: ", t);
+    const r = await t.wait();
+    console.log("+ Step 2: ", r);
+  },
+});
 
-(async () => {
-  console.log("START");
+const showBalances = async (name, acc, tok) => {
+  const netBalance = stdlib.formatCurrency(await acc.balanceOf());
+  const tokBalance = stdlib.formatWithDecimals(await acc.balanceOf(tok), 0);
+  console.log(`(${name}) Balance:`, netBalance);
+  console.log(`${tok} Balance:`, tokBalance);
+};
 
-  const backend = await import(`./build/${infile}.main.mjs`);
-  const stdlib = await loadStdlib();
-  const startingBalance = stdlib.parseCurrency(1000);
+const L1a = async (backend) => {
+  const startingBalance = stdlib.parseCurrency(100);
 
-  const accAlice = await stdlib.newTestAccount(startingBalance);
-  const accBob = await stdlib.newTestAccount(startingBalance);
-  const accEve = await stdlib.newTestAccount(startingBalance);
-
-  const accs = await Promise.all(
-    Array.from({ length: 10 }).map(() => stdlib.newTestAccount(startingBalance))
+  const [accDeployer, accIssuer, ...accAttacher] = await stdlib.newTestAccounts(
+    10,
+    startingBalance
   );
 
-  const reset = async (accs) => {
-    await Promise.all(accs.map(rebalance));
-    await Promise.all(
-      accs.map(async (el) =>
-        console.log(`balance (acc): ${await getBalance(accAlice)}`)
+  const myGasLimit = 5000000;
+  accDeployer.setGasLimit(myGasLimit);
+  accAttacher.map((el) => el.setGasLimit(myGasLimit));
+
+  console.log("Hello, Deployer and Attachers!");
+
+  console.log("Launching...");
+
+  const ctcDeployer = accDeployer.contract(backend);
+  const ctcAttacher = accAttacher[0].contract(backend, ctcDeployer.getInfo());
+
+  const zorkmid = await stdlib.launchToken(accIssuer, "zorkmid", "ZMD");
+  await zorkmid.mint(accAttacher[0], 240);
+
+  const showAllBalances = async (i) => {
+    await showBalances("Deployer", accDeployer, zorkmid.id);
+    await showBalances("Attacher", accAttacher[i], zorkmid.id);
+  };
+
+  console.log("=== Before ===");
+  await showAllBalances(0);
+
+  console.log("Deploying contract...");
+
+  await stdlib.withDisconnect(() =>
+    ctcDeployer.p.Deployer({
+      getParams: () => ({
+        token: zorkmid.id, // ERC20 but need it as Token to satisfy (L1.2.2.1)
+        periodCount: 12, // how many payments, ex 12
+        periodAmount: 20, // how much each payment, ex 100
+        periodLength: 1, // how long each payment, ex 30 days in blocks
+        ttl: 1000, // time to live
+      }),
+      ready: () => {
+        console.log("Ready!");
+        stdlib.disconnect(null); // causes withDisconnect to immediately return null
+      },
+    })
+  );
+
+  console.log("Contract deployed!");
+
+  await showAllBalances(0);
+
+  console.log("Accepting contract...");
+
+  await stdlib.withDisconnect(() =>
+    ctcAttacher.p.Attacher({
+      accept: () => true,
+      ready: () => {
+        console.log("Ready!");
+        stdlib.disconnect(null); // causes withDisconnect to immediately return null
+      },
+    })
+  );
+
+  console.log("Contract accepted!");
+
+  await showAllBalances(0);
+
+  for (let i = 0; i < 12; i++) {
+    console.log(`Step ${i}`);
+    console.log("Claiming...");
+    await ctcDeployer.a.claim(1);
+    console.log("Claimed!");
+    await showAllBalances(0);
+  }
+
+  console.log("Goodbye, Deployer and Attachers!");
+};
+
+const L1b = async (backend) => {
+  const startingBalance = stdlib.parseCurrency(100);
+
+  const [accDeployer, accIssuer, ...accAttacher] = await stdlib.newTestAccounts(
+    10,
+    startingBalance
+  );
+
+  const myGasLimit = 5000000;
+  accDeployer.setGasLimit(myGasLimit);
+  accAttacher.map((el) => el.setGasLimit(myGasLimit));
+
+  console.log("Hello, Deployer and Attachers!");
+
+  console.log("Launching...");
+
+  const ctcDeployer = accDeployer.contract(backend);
+  const ctcAttacher = accAttacher[0].contract(backend, ctcDeployer.getInfo());
+
+  const zorkmid = await stdlib.launchToken(accIssuer, "zorkmid", "ZMD");
+  await zorkmid.mint(accAttacher[0], 240);
+
+  const showAllBalances = async (i) => {
+    await showBalances("Deployer", accDeployer, zorkmid.id);
+    await showBalances("Attacher", accAttacher[i], zorkmid.id);
+  };
+
+  console.log("=== Before ===");
+  await showAllBalances(0);
+
+  console.log("Deploying contract...");
+
+  await stdlib.withDisconnect(() =>
+    ctcDeployer.p.Deployer({
+      getParams: () => ({
+        token: zorkmid.id, // ERC20 but need it as Token to satisfy (L1.2.2.1)
+        periodCount: 12, // how many payments, ex 12
+        periodAmount: 20, // how much each payment, ex 100
+        periodLength: 1, // how long each payment, ex 30 days in blocks
+        ttl: 1000, // time to live
+      }),
+      ready: () => {
+        console.log("Ready!");
+        stdlib.disconnect(null); // causes withDisconnect to immediately return null
+      },
+    })
+  );
+
+  console.log("Contract deployed!");
+
+  await showAllBalances(0);
+
+  console.log("Accepting contract...");
+
+  await stdlib.withDisconnect(() =>
+    ctcAttacher.p.Attacher({
+      accept: () => true,
+      ready: () => {
+        console.log("Ready!");
+        stdlib.disconnect(null); // causes withDisconnect to immediately return null
+      },
+    })
+  );
+
+  console.log("Contract accepted!");
+
+  await showAllBalances(0);
+
+  // --------------------------------
+  // XXX changed this part
+  // --------------------------------
+  console.log("Claiming...");
+  await stdlib.wait(12);
+  await ctcDeployer.a.claim(12);
+  console.log("Claimed!");
+  await showAllBalances(0);
+  // --------------------------------
+
+  console.log("Goodbye, Deployer and Attachers!");
+};
+
+const L2a = async (backend) => {
+  const startingBalance = stdlib.parseCurrency(100);
+
+  const [accDeployer, accIssuer, ...accAttacher] = await stdlib.newTestAccounts(
+    5,
+    startingBalance
+  );
+
+  const myGasLimit = 5000000;
+  accDeployer.setGasLimit(myGasLimit);
+  accAttacher.map((el) => el.setGasLimit(myGasLimit));
+
+  console.log("Hello, Deployer and Attachers!");
+
+  console.log("Launching...");
+
+  const ctcDeployer = accDeployer.contract(backend);
+  const ctcAttacher = accAttacher[0].contract(backend, ctcDeployer.getInfo());
+
+  const zorkmid = await stdlib.launchToken(accIssuer, "zorkmid", "ZMD");
+  await zorkmid.mint(accAttacher[0], 240);
+
+  const showAllBalances = async (i) => {
+    await showBalances("Deployer", accDeployer, zorkmid.id);
+    await showBalances("Attacher", accAttacher[i], zorkmid.id);
+  };
+
+  console.log("=== Before ===");
+  await showAllBalances(0);
+
+  console.log("Deploying contract...");
+
+  await stdlib.withDisconnect(() =>
+    ctcDeployer.p.Deployer({
+      getParams: () => ({
+        token: zorkmid.id, // ERC20 but need it as Token to satisfy (L1.2.2.1)
+        periodCount: 12, // how many payments, ex 12
+        periodAmount: 20, // how much each payment, ex 100
+        periodLength: 1, // how long each payment, ex 30 days in blocks
+      }),
+      ready: () => {
+        console.log("Ready!");
+        stdlib.disconnect(null); // causes withDisconnect to immediately return null
+      },
+    })
+  );
+
+  console.log("Contract deployed!");
+
+  await showAllBalances(0);
+
+  console.log("Accepting contract...");
+
+  await stdlib.wait(10);
+  console.log(`contract ${await ctcAttacher.getInfo()}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  const attacherAddress = accAttacher[0].getAddress();
+  const deployerAddress = accDeployer.getAddress();
+
+  console.log(`subscription(address):`);
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  const res = await ctcAttacher.a.subscribe();
+
+  console.log(`res ${res}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  console.log(`address: ${attacherAddress}`);
+
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  console.log("Contract accepted!");
+
+  await showAllBalances(0);
+
+  // --------------------------------
+  // XXX changed this part
+  // --------------------------------
+  for (let i = 0; i < 12; i++) {
+    console.log(`Step ${i}`);
+    console.log("Claiming...");
+    console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+    await ctcDeployer.a.claim(attacherAddress, 1);
+    console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+    console.log("Claimed!");
+    await showAllBalances(0);
+  }
+  // --------------------------------
+  console.log("Goodbye, Deployer and Attachers!");
+};
+const L2b = async (backend) => {
+  const startingBalance = stdlib.parseCurrency(100);
+
+  const [accDeployer, accIssuer, ...accAttacher] = await stdlib.newTestAccounts(
+    5,
+    startingBalance
+  );
+
+  const myGasLimit = 5000000;
+  accDeployer.setGasLimit(myGasLimit);
+  accAttacher.map((el) => el.setGasLimit(myGasLimit));
+
+  console.log("Hello, Deployer and Attachers!");
+
+  console.log("Launching...");
+
+  const ctcDeployer = accDeployer.contract(backend);
+  const ctcAttacher = accAttacher[0].contract(backend, ctcDeployer.getInfo());
+
+  const zorkmid = await stdlib.launchToken(accIssuer, "zorkmid", "ZMD");
+  await zorkmid.mint(accAttacher[0], 240);
+
+  const showAllBalances = async (i) => {
+    await showBalances("Deployer", accDeployer, zorkmid.id);
+    await showBalances("Attacher", accAttacher[i], zorkmid.id);
+  };
+
+  console.log("=== Before ===");
+  await showAllBalances(0);
+
+  console.log("Deploying contract...");
+
+  await stdlib.withDisconnect(() =>
+    ctcDeployer.p.Deployer({
+      getParams: () => ({
+        token: zorkmid.id, // ERC20 but need it as Token to satisfy (L1.2.2.1)
+        periodCount: 12, // how many payments, ex 12
+        periodAmount: 20, // how much each payment, ex 100
+        periodLength: 1, // how long each payment, ex 30 days in blocks
+      }),
+      ready: () => {
+        console.log("Ready!");
+        stdlib.disconnect(null); // causes withDisconnect to immediately return null
+      },
+    })
+  );
+
+  console.log("Contract deployed!");
+
+  await showAllBalances(0);
+
+  console.log("Accepting contract...");
+
+  await stdlib.wait(10);
+  console.log(`contract ${await ctcAttacher.getInfo()}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  const attacherAddress = accAttacher[0].getAddress();
+  const deployerAddress = accDeployer.getAddress();
+
+  console.log(`subscription(address):`);
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  const res = await ctcAttacher.a.subscribe();
+
+  console.log(`res ${res}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  console.log(`address: ${attacherAddress}`);
+
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  console.log("Contract accepted!");
+
+  await showAllBalances(0);
+
+  // --------------------------------
+  // XXX changed this part
+  // --------------------------------
+  await stdlib.wait(20); // wait for lower gas price
+  console.log("Claiming...");
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+  await ctcDeployer.a.claim(attacherAddress, 12);
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+  console.log("Claimed!");
+  await showAllBalances(0);
+  // --------------------------------
+  console.log("Goodbye, Deployer and Attachers!");
+};
+const L2c = async (backend) => {
+  const startingBalance = stdlib.parseCurrency(100);
+
+  const [accDeployer, accIssuer, ...accAttacher] = await stdlib.newTestAccounts(
+    5,
+    startingBalance
+  );
+
+  const myGasLimit = 5000000;
+  accDeployer.setGasLimit(myGasLimit);
+  accAttacher.map((el) => el.setGasLimit(myGasLimit));
+
+  console.log("Hello, Deployer and Attachers!");
+
+  console.log("Launching...");
+
+  const ctcDeployer = accDeployer.contract(backend);
+  const ctcAttacher = accAttacher[0].contract(backend, ctcDeployer.getInfo());
+
+  const zorkmid = await stdlib.launchToken(accIssuer, "zorkmid", "ZMD");
+  await zorkmid.mint(accAttacher[0], 240);
+
+  const showAllBalances = async (i) => {
+    await showBalances("Deployer", accDeployer, zorkmid.id);
+    await showBalances("Attacher", accAttacher[i], zorkmid.id);
+  };
+
+  console.log("=== Before ===");
+  await showAllBalances(0);
+
+  console.log("Deploying contract...");
+
+  await stdlib.withDisconnect(() =>
+    ctcDeployer.p.Deployer({
+      getParams: () => ({
+        token: zorkmid.id, // ERC20 but need it as Token to satisfy (L1.2.2.1)
+        periodCount: 12, // how many payments, ex 12
+        periodAmount: 20, // how much each payment, ex 100
+        periodLength: 1, // how long each payment, ex 30 days in blocks
+      }),
+      ready: () => {
+        console.log("Ready!");
+        stdlib.disconnect(null); // causes withDisconnect to immediately return null
+      },
+    })
+  );
+
+  console.log("Contract deployed!");
+
+  await showAllBalances(0);
+
+  console.log("Accepting contract...");
+
+  await stdlib.wait(10);
+  console.log(`contract ${await ctcAttacher.getInfo()}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  const attacherAddress = accAttacher[0].getAddress();
+  const deployerAddress = accDeployer.getAddress();
+
+  console.log(`subscription(address):`);
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  const res = await ctcAttacher.a.subscribe();
+
+  console.log(`res ${res}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  console.log(`address: ${attacherAddress}`);
+
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  console.log("Contract accepted!");
+
+  await showAllBalances(0);
+
+  // --------------------------------
+  // XXX changed this part
+  // --------------------------------
+  await stdlib.wait(20); // wait for lower gas price
+  console.log("Claiming...");
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+  await ctcDeployer.a.claim(attacherAddress, 6);
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+  console.log("Claimed!");
+  await showAllBalances(0);
+  // --------------------------------
+  // XXX added this part
+  // --------------------------------
+  await stdlib.wait(20); // wait for lower gas price
+  console.log("Cancelling...");
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+  await ctcAttacher.a.cancel();
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+  console.log("Cancelled!");
+  await showAllBalances(0);
+  // --------------------------------
+  console.log("Goodbye, Deployer and Attachers!");
+};
+const L3a = async (backend) => {
+  const startingBalance = stdlib.parseCurrency(100);
+
+  const [accDeployer, accIssuer, ...accAttacher] = await stdlib.newTestAccounts(
+    5,
+    startingBalance
+  );
+
+  const myGasLimit = 5000000;
+  accDeployer.setGasLimit(myGasLimit);
+  accAttacher.map((el) => el.setGasLimit(myGasLimit));
+
+  console.log("Hello, Deployer and Attachers!");
+
+  console.log("Launching...");
+
+  const ctcDeployer = accDeployer.contract(backend);
+  const ctcAttacher = accAttacher[0].contract(backend, ctcDeployer.getInfo());
+
+  const zorkmid = await stdlib.launchToken(accIssuer, "zorkmid", "ZMD");
+  await zorkmid.mint(accAttacher[0], 240);
+
+  const showAllBalances = async (i) => {
+    await showBalances("Deployer", accDeployer, zorkmid.id);
+    await showBalances("Attacher", accAttacher[i], zorkmid.id);
+  };
+
+  console.log("=== Before ===");
+  await showAllBalances(0);
+
+  console.log("Deploying contract...");
+
+  const periodCount = 12;
+  const periodAmount = 20;
+
+  await stdlib.withDisconnect(() =>
+    ctcDeployer.p.Deployer({
+      getParams: () => ({
+        token: zorkmid.id, // ERC20 but need it as Token to satisfy (L1.2.2.1)
+        periodCount, // how many payments, ex 12
+        periodAmount, // how much each payment, ex 100
+        periodLength: 1, // how long each payment, ex 30 days in blocks
+      }),
+      ready: stdlib.disconnect, // causes withDisconnect to immediately return null
+    })
+  );
+
+  const { e: {
+    join,
+    redeem
+  } } = ctcDeployer;
+
+  join.next().then(console.log);
+  redeem.next().then(console.log);
+
+  const Smarty = await ctcDeployer.getInfo();
+
+  console.log(Smarty);
+
+  console.log("Contract deployed!");
+
+  await showAllBalances(0);
+
+  const totalAmount = periodCount * periodAmount;
+
+  console.log(`Attacher is allowing ${totalAmount}`);
+
+  const { ethers } = stdlib;
+  const ERC20 = [
+    "function approve(address _spender, uint256 _value) public returns (bool success)",
+    "function allowance(address _owner, address _spender) public view returns (uint256 remaining)",
+  ];
+  const ZorkmidRaw = new ethers.Contract(
+    zorkmid.id,
+    ERC20,
+    accAttacher[0].networkAccount
+  );
+
+  const { getAllowance, doApprove } = erc20ABIHelper(ZorkmidRaw, Smarty);
+
+  await doApprove(accAttacher[0].getAddress(), totalAmount);
+
+  await showAllBalances(0);
+
+  console.log("Accepting contract...");
+
+  await stdlib.wait(10);
+  console.log(`contract ${Smarty}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  const attacherAddress = accAttacher[0].getAddress();
+  const deployerAddress = accDeployer.getAddress();
+
+  console.log(`subscription(address):`);
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  const res = await ctcAttacher.a.subscribe();
+
+  console.log(`res ${res}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  console.log(`address: ${attacherAddress}`);
+
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  console.log("Contract accepted!");
+
+  await showAllBalances(0);
+
+  // --------------------------------
+  // XXX changed this part
+  // --------------------------------
+  console.log(
+    `allowance: ${await getAllowance(await accAttacher[0].getAddress())}`
+  );
+  console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+
+  await stdlib.wait(20); // wait for lower gas price
+  for (let i = 0; i < 12; i++) {
+    console.log("Claiming...");
+
+    await ctcDeployer.a.claim(attacherAddress, 1);
+
+    console.log(
+      stdlib.formatWithDecimals(
+        await getAllowance(await accAttacher[0].getAddress()),
+        0
       )
     );
-  };
 
-  const rebalance = async (acc) => {
-    if ((await getBalance(acc)) > 1000) {
-      await stdlib.transfer(
-        acc,
-        accEve?.networkAccount?.addr,
-        stdlib.parseCurrency((await getBalance(acc)) - 1000)
-      );
-    } else {
-      await stdlib.transfer(
-        accEve,
-        acc?.networkAccount?.addr,
-        stdlib.parseCurrency(1000 - (await getBalance(acc)))
-      );
-    }
-  };
+    // approve zero here
 
-  const zorkmid = await stdlib.launchToken(accAlice, "zorkmid", "ZMD");
-  const gil = await stdlib.launchToken(accBob, "gil", "GIL");
-  await accAlice.tokenAccept(gil.id);
-  await accBob.tokenAccept(zorkmid.id);
+    console.log(await getAllowance(await accAttacher[0].getAddress()));
 
-  const getBalance = async (who) =>
-    stdlib.formatCurrency(await stdlib.balanceOf(who), 4);
+    console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
 
-  const beforeAlice = await getBalance(accAlice);
-  const beforeBob = await getBalance(accBob);
+    console.log("Claimed!");
+    await showAllBalances(0);
+  }
+  // --------------------------------
+  // XXX cancel was here
+  // --------------------------------
+  console.log("Goodbye, Deployer and Attachers!");
+};
+const main = async () => {
+  console.log(`L1 (a): claim in 12 steps`);
+  await L1a(l1Backend);
+  console.log(`L1 (b): claim in 1 step`);
+  await L1b(l1Backend);
+  console.log(`L2 (a): claim in 12 steps`);
+  await L2a(l2Backend);
+  console.log(`L2 (b): claim in 1 steps`);
+  await L2b(l2Backend);
+  console.log(`L2 (c): claim in 6 steps then cancel`);
+  await L2c(l2Backend);
+  console.log(`L3 (a):`);
+  console.log(`L3 (a): claim in 6 steps`);
+  await L3a(l3Backend);
+};
 
-  const getParams = (addr) => ({
-    addr,
-    addr2: addr,
-    addr3: addr,
-    addr4: addr,
-    addr5: addr,
-    amt: stdlib.parseCurrency(1),
-    tok: zorkmid.id,
-    token_name: "",
-    token_symbol: "",
-    secs: 0,
-    secs2: 0,
-  });
-
-  // (1) can be deleted before activation
-  console.log("CAN DELETED INACTIVE");
-  (async (acc) => {
-    let addr = acc?.networkAccount?.addr;
-    let ctc = acc.contract(backend);
-    Promise.all([
-      backend.Constructor(ctc, {
-        getParams: () => getParams(addr),
-      }),
-      backend.Verifier(ctc, {}),
-    ]).catch(console.dir);
-    let appId = await ctc.getInfo();
-  })(accAlice);
-  await stdlib.wait(4);
-
-  await reset([accAlice, accBob]);
-
-  // (2) constructor receives payment on activation
-  console.log("CAN ACTIVATE WITH PAYMENT");
-  await (async (acc, acc2) => {
-    let addr = acc?.networkAccount?.addr;
-    let ctc = acc.contract(backend);
-    Promise.all([
-      backend.Constructor(ctc, {
-        getParams: () => getParams(addr),
-      }),
-    ]);
-    let appId = await ctc.getInfo();
-    let ctc2 = acc2.contract(backend, appId);
-    Promise.all([backend.Contractee(ctc2, {})]);
-    await stdlib.wait(50);
-  })(accAlice, accBob);
-  await stdlib.wait(4);
-
-  const afterAlice = await getBalance(accAlice);
-  const afterBob = await getBalance(accBob);
-
-  const diffAlice = Math.round(afterAlice - beforeAlice);
-  const diffBob = Math.round(afterBob - beforeBob);
-
-  console.log(
-    `Alice went from ${beforeAlice} to ${afterAlice} (${diffAlice}).`
-  );
-  console.log(`Bob went from ${beforeBob} to ${afterBob} (${diffBob}).`);
-
-  assert.equal(diffAlice, 1);
-  assert.equal(diffBob, -1);
-
-  await reset([accAlice, accBob]);
-
-  process.exit();
-})();
+main();
