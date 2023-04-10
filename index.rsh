@@ -17,12 +17,11 @@ const fClaim = Fun([UInt], Bool);
 const fAccept = Fun([], Bool);
 const fAnnounce = Fun([UInt, UInt, UInt], Bool);
 const fSubscribe = Fun([], Bool);
-const fSubscribe2b = Fun([Address, UInt], Bool);
+const fSubscribe4 = Fun([Address, UInt], Bool);
 const fClaim2 = Fun([Address, UInt], Bool);
 const fClaim2b = Fun([Address, UInt, Address, UInt], Bool);
 const fCancel = Fun([], Bool);
 const fCancel2b = Fun([Address, UInt], Bool);
-const fSubscription = Fun([Address, UInt, Address], Subscription)
 const fGetParams = (Params) => Fun([], Params);
 const fState = (State) => Fun([], State);
 
@@ -275,14 +274,14 @@ const l3Api = {
 const l4Api = {
   claim: fClaim2b,
   announce: fAnnounce,
-  subscribe: fSubscribe2b,
+  subscribe: fSubscribe4,
   cancel: fCancel2b,
 };
 
 const l5Api = {
   claim: fClaim2b,
   announce: fAnnounce,
-  subscribe: fSubscribe2b,
+  subscribe: fSubscribe4,
 };
 
 // EVENT
