@@ -19,13 +19,13 @@ const BaseDetails = Object({
   periodAmount: UInt, // how much each payment, ex 100
   periodLength: UInt, // how long each payment, ex 30 days in blocks
 });
-const L1DetailsExtensions = Object({
+const L1DetailsExtension = Object({
   token: Token, // ERC20 but need it as Token to satisfy (L1.2.2.1)
   ttl: UInt, // time to live
 });
 const L1Details = Object({
   ...Object.fields(BaseDetails),
-  ...Object.fields(L1DetailsExtensions),
+  ...Object.fields(L1DetailsExtension),
 });
 const L1Params = Object({
   ...Object.fields(L1Details),
@@ -344,6 +344,252 @@ export const L2 = Reach.App(() => {
   commit();
   exit();
 });
+const L2bDetails = Object({
+  ...Object.fields(L2DetaillsExtensions),
+});
+const L2bParams = Object({
+  ...Object.fields(L2bDetails),
+});
+// many to many subscriptions
+const L2bStateExtension = Struct([
+  ["providerCount", UInt],
+  ["subscriberCount", UInt],
+  ["safeAmount", UInt],
+  ["safeSize", UInt],
+]);
+const L2bState = Struct([
+  ...Struct.fields(L2StateExtension),
+  ...Struct.fields(L2bStateExtension),
+]);
+const ProviderService = Struct([
+  ["periodCount", UInt],
+  ["periodAmount", UInt],
+  ["periodLength", UInt],
+  ["subscriberCount", UInt],
+]);
+const fClaim2b = Fun([Address, UInt, Address, UInt], Bool);
+const fAnnounce = Fun([UInt, UInt, UInt], Bool);
+const fSubscribe2b = Fun([Address, UInt], Bool);
+const fCancel2b = Fun([Address, UInt], Bool);
+const api2b = {
+  ...api2,
+  claim: fClaim2b,
+  announce: fAnnounce,
+  subscribe: fSubscribe2b,
+  cancel: fCancel2b,
+};
+const Subscription = Tuple(UInt, UInt);
+const view2 = {
+  state: Fun([], L2bState),
+  subscription: Fun([Address, UInt, Address], Subscription),
+};
+const L2bEvents = () => [
+  Events({
+    join: [Address, UInt, Address],
+    redeem: [Address, UInt, Address, UInt],
+    announcement: [Address, UInt, UInt, UInt, UInt],
+  }),
+];
+export const L2b = Reach.App(() => {
+  setOptions({
+    connectors: [ETH],
+  });
+  const [Provider] = Participants(L2bParams);
+  const [a] = [API(api2b)];
+  const [v] = [View(view2)];
+  const [e] = L2bEvents();
+  init();
+  // The first one to publish deploys the contract
+  Provider.only(() => {
+    const { token } = declassify(interact.getParams());
+  });
+  Provider.publish(token);
+  Provider.interact.ready();
+
+  const providerM = new Map(UInt);
+  const providerServiceM = new Map(Tuple(Address, UInt), ProviderService);
+  const subscriptionM = new Map(Tuple(Address, UInt, Address), Subscription);
+
+  const initialState = {
+    token,
+    providerCount: 0, // variable, number of providers
+    subscriberCount: 0, // variable, number of subscribers
+    safeAmount: 0, // variable, current amount of tokens held for subscribers
+    safeSize: 0, // variable, total amount of tokens received from subscribers
+  };
+
+  const [s] = parallelReduce([initialState])
+    .while(true)
+    .invariant(balance() == 0, "balance is accurate")
+    .invariant(
+      balance(token) == subscriptionM.reduce(0, (acc, w) => acc + w[0]),
+      "token balance is accurate"
+    )
+    .invariant(
+      s.subscriberCount == subscriptionM.size(),
+      "subscriber count is accurate"
+    )
+    .invariant(
+      s.providerCount == providerM.size(),
+      "provider count is accurate"
+    )
+    .invariant(
+      s.safeAmount == subscriptionM.reduce(0, (acc, w) => acc + w[0]),
+      "safe amount is accurate"
+    )
+    .invariant(s.safeSize >= s.safeAmount, "safe size is accurate")
+    .paySpec([token])
+    .define(() => {
+      const getState = () => L2bState.fromObject(s);
+      v.state.set(getState);
+      const getSubscription = (addr, i, addr2) => {
+        const m_subscription = subscriptionM[[addr, i, addr2]];
+        return fromSome(m_subscription, [0, 0]);
+      };
+      v.subscription.set(getSubscription);
+    })
+    // api: announce
+    // input: provider service
+    // output: true if announce was successful
+    .api_(a.announce, (periodCount, periodAmount, periodLength) => {
+      check(
+        isNone(providerM[this]) || isSome(providerM[this]),
+        "impossible"
+      );
+      return [
+        (k) => {
+          const i = providerM[this];
+          switch (i) {
+            case None: {
+              const providerService = ProviderService.fromObject({
+                periodCount,
+                periodAmount,
+                periodLength,
+                subscriberCount: 0,
+              });
+              providerServiceM[[this, 0]] = providerService;
+              providerM[this] = 1;
+              e.announcement(this, 0, periodCount, periodAmount, periodLength);
+              k(true);
+              return [{ ...s, providerCount: s.providerCount + 1 }];
+            }
+            case Some: {
+              // impossible
+              const providerService = ProviderService.fromObject({
+                periodCount,
+                periodAmount,
+                periodLength,
+                subscriberCount: 0,
+              });
+              providerServiceM[[this, i]] = providerService;
+              providerM[this] = i + 1;  
+              e.announcement(this, i, periodCount, periodAmount, periodLength);
+              k(true);
+              return [s];
+            }
+          }
+        },
+      ];
+    })
+    .define(() => {
+      const depositAmount = (addr, i) => {
+        const ps = providerServiceM[[addr, i]];
+        switch (ps) {
+          case None:
+            return 0;
+          case Some:
+            const { periodCount, periodAmount } = ps;
+            return periodAmount * periodCount;
+        }
+      };
+    })
+    // api: subscribe
+    // input: nil
+    // output: true if subscribe was successfu
+    .api_(a.subscribe, (addr, i) => {
+      check(isNone(subscriptionM[[addr, i, this]]), "already subscribed");
+      check(isSome(providerServiceM[[addr, i]]), "invalid provider");
+      return [
+        [0, [depositAmount(addr, i), token]],
+        (k) => {
+          subscriptionM[[addr, i, this]] = [
+            depositAmount(addr, i),
+            thisConsensusTime(),
+          ];
+          e.join(addr, i, this);
+          k(true);
+          return [
+            {
+              ...s,
+              subscriberCount: s.subscriberCount + 1,
+              safeAmount: s.safeAmount + depositAmount(addr, i),
+              safeSize: max(s.safeSize, s.safeAmount + depositAmount(addr, i)),
+            },
+          ];
+        },
+      ];
+    })
+    // api: claim
+    // input: proposed amount of periods to claim
+    // output: true if claim was successful
+    .define(() => {
+      const claimAmount = (addr, i, msg) =>
+        maybe(providerServiceM[[addr, i]], 0, (ps) => {
+          const { periodAmount } = ps;
+          return periodAmount * msg;
+        });
+      const claimDelta = (addr, i, msg) =>
+        maybe(providerServiceM[[addr, i]], 0, (ps) => {
+          const { periodLength } = ps;
+          return msg * periodLength;
+        });
+    })
+    .api_(a.claim, (addr, i, addr2, msg) => {
+      check(isSome(subscriptionM[[addr, i, addr2]]), "not subscribed");
+      check(
+        claimAmount(addr, i, msg) <= getSubscription(addr, i, addr2)[0],
+        "not enough remaining"
+      );
+      return [
+        (k) => {
+          const [remaining, lastTime] = getSubscription(addr, i, addr2);
+          enforce(
+            thisConsensusTime() >= lastTime + claimDelta(addr, i, msg),
+            "not enough time has passed"
+          );
+          transfer([[claimAmount(addr, i, msg), token]]).to(addr); // (L2.3.3)
+          subscriptionM[[addr, i, addr2]] = [
+            remaining - claimAmount(addr, i, msg),
+            lastTime + claimDelta(addr, i, msg),
+          ];
+          e.redeem(addr, i, addr2, msg);
+          k(true);
+          return [
+            { ...s, safeAmount: s.safeAmount - claimAmount(addr, i, msg) },
+          ];
+        },
+      ];
+    })
+    // api: cancel (L2.3.4)
+    // input: nil
+    // output: true if cancel was successful
+    .api_(a.cancel, (addr, i) => {
+      check(isSome(subscriptionM[[addr, i, this]]), "not subscribed");
+      check(getSubscription(addr, i, this)[0] > 0, "nothing to cancel");
+      return [
+        (k) => {
+          const subscription = getSubscription(addr, i, this);
+          const [remaining, _] = subscription;
+          transfer([[remaining, token]]).to(this); // (L2.3.4.1)
+          subscriptionM[[addr, i, this]] = [0, thisConsensusTime()]; // (L2.3.4.2)
+          k(true);
+          return [{ ...s, safeAmount: s.safeAmount - remaining }];
+        },
+      ];
+    });
+  commit();
+  exit();
+});
 
 /*
  * L3
@@ -465,7 +711,7 @@ export const L3 = Reach.App(() => {
         ...s,
         subscriberCount: s.subscriberCount + 1,
         safeAmount: s.safeAmount + subscribeDepositAmount,
-        safeSize: max(s.safeSize, s.safeAmount + subscribeDepositAmount)
+        safeSize: max(s.safeSize, s.safeAmount + subscribeDepositAmount),
       };
     })
     // api: subscribe
@@ -486,7 +732,10 @@ export const L3 = Reach.App(() => {
               k(false);
               return [s];
             case None: // new subscription
-              subscriptionM[this] = [subscribeDepositAmount, thisConsensusTime()];
+              subscriptionM[this] = [
+                subscribeDepositAmount,
+                thisConsensusTime(),
+              ];
               k(true);
               e.join(this, token, periodAmount, periodCount, periodLength);
               return [subscribeNextState];
@@ -503,7 +752,7 @@ export const L3 = Reach.App(() => {
       const claimNextState = (msg) => ({
         ...s,
         safeAmount: s.safeAmount - claimAmount(msg),
-      })
+      });
     })
     .api_(a.claim, (addr, msg) => {
       check(isSome(subscriptionM[addr]), "not subscribed");
@@ -540,7 +789,7 @@ export const L3 = Reach.App(() => {
                 lastTime + claimDelta(msg),
               ];
               k(success);
-              return [claimNextState(msg)]; 
+              return [claimNextState(msg)];
           }
         },
       ];

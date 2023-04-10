@@ -1,6 +1,7 @@
 import { loadStdlib } from "@reach-sh/stdlib";
 import * as l1Backend from "./build/index.L1.mjs";
 import * as l2Backend from "./build/index.L2.mjs";
+import * as l2bBackend from "./build/index.L2b.mjs";
 import * as l3Backend from "./build/index.L3.mjs";
 const stdlib = loadStdlib(process.env);
 
@@ -474,6 +475,129 @@ const L2c = async (backend) => {
   // --------------------------------
   console.log("Goodbye, Deployer and Attachers!");
 };
+
+// L2b
+const L2d = async (backend) => {
+  const startingBalance = stdlib.parseCurrency(100);
+
+  const [accDeployer, accIssuer, ...accAttacher] = await stdlib.newTestAccounts(
+    5,
+    startingBalance
+  );
+
+  const myGasLimit = 5000000;
+  accDeployer.setGasLimit(myGasLimit);
+  accAttacher.map((el) => el.setGasLimit(myGasLimit));
+
+  console.log("Hello, Deployer and Attachers!");
+
+  console.log("Launching...");
+
+  const ctcDeployer = accDeployer.contract(backend);
+
+  const ctcAttacher = accAttacher[0].contract(backend, ctcDeployer.getInfo());
+
+  const zorkmid = await stdlib.launchToken(accIssuer, "zorkmid", "ZMD");
+  await zorkmid.mint(accAttacher[0], 240 * 12);
+
+  const showAllBalances = async (i) => {
+    await showBalances("Deployer", accDeployer, zorkmid.id);
+    await showBalances("Attacher", accAttacher[i], zorkmid.id);
+  };
+
+  console.log("=== Before ===");
+  await showAllBalances(0);
+
+  console.log("Deploying contract...");
+
+  await stdlib.withDisconnect(() =>
+    ctcDeployer.p.Deployer({
+      getParams: () => ({
+        token: zorkmid.id, // ERC20 but need it as Token to satisfy (L1.2.2.1)
+      }),
+      ready: () => {
+        console.log("Ready!");
+        stdlib.disconnect(null); // causes withDisconnect to immediately return null
+      },
+    })
+  );
+
+  console.log("Contract deployed!");
+
+  await showAllBalances(0);
+
+  console.log("Accepting contract...");
+
+  await stdlib.wait(1); // wait for lower gas price
+
+  console.log(`contract ${await ctcAttacher.getInfo()}`);
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  const attacherAddress = accAttacher[0].getAddress();
+  const deployerAddress = accDeployer.getAddress();
+
+  // announce provider service
+
+  console.log("Announcing provider service...");
+
+  for (let i = 0; i < 12; i++) {
+    await ctcDeployer.a.announce(
+      /*periodCount*/ 12,
+      /*periodAmount*/ 20,
+      /*periodLength*/ 1
+    );
+  }
+
+  console.log((await ctcAttacher.v.state())[1]);
+
+  // --------------------------------
+  // listening for events
+  // --------------------------------
+  const { e } = ctcDeployer;
+  const listenForEvents = async (evt) => {
+    while (true) {
+      await e[evt].next().then(console.log);
+    }
+  };
+  const listenForAnnouncement = () => listenForEvents("announcement");
+  const listenForJoin = () => listenForEvents("join");
+  const listenForRedeem = () => listenForEvents("redeem");
+  listenForAnnouncement();
+  listenForJoin();
+  listenForRedeem();
+  // --------------------------------
+
+  await stdlib.wait(1); // wait for lower gas price
+
+  for (let i = 0; i < 12; i++) {
+    console.log(`Subscribing to service ${i}...`);
+    const res = await ctcAttacher.a.subscribe(deployerAddress, i);
+    console.log({ res });
+    console.log("Subscribed!");
+    await stdlib.wait(1);
+  }
+
+  await showAllBalances(0);
+
+  // --------------------------------
+  // XXX changed this part
+  // --------------------------------
+  for (let j = 0; j < 12; j++) {
+    for (let i = 0; i < 12; i++) {
+      console.log(`Step ${i}`);
+      console.log("Claiming...");
+      console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+      await ctcDeployer.a.claim(deployerAddress, j, attacherAddress, 1);
+      console.log((await ctcAttacher.v.subscription(attacherAddress))[1]);
+      console.log("Claimed!");
+      await showAllBalances(0);
+    }
+  }
+  // --------------------------------
+  console.log("Goodbye, Deployer and Attachers!");
+};
+
 const L3a = async (backend) => {
   const startingBalance = stdlib.parseCurrency(100);
 
@@ -521,10 +645,9 @@ const L3a = async (backend) => {
     })
   );
 
-  const { e: {
-    join,
-    redeem
-  } } = ctcDeployer;
+  const {
+    e: { join, redeem },
+  } = ctcDeployer;
 
   join.next().then(console.log);
   redeem.next().then(console.log);
@@ -631,6 +754,8 @@ const main = async () => {
   await L2b(l2Backend);
   console.log(`L2 (c): claim in 6 steps then cancel`);
   await L2c(l2Backend);
+  console.log(`L2 (d): L2b`);
+  await L2d(l2bBackend);
   console.log(`L3 (a):`);
   console.log(`L3 (a): claim in 6 steps`);
   await L3a(l3Backend);
