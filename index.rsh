@@ -10,25 +10,11 @@ const makeTokenObj = (token) =>
     allowance: Fun([Address, Address], UInt),
   });
 
-// FUN
-
-const fReady = Fun([], Null);
-const fClaim = Fun([UInt], Bool);
-const fAccept = Fun([], Bool);
-const fAnnounce = Fun([UInt, UInt, UInt], Bool);
-const fSubscribe = Fun([], Bool);
-const fSubscribe4 = Fun([Address, UInt], Bool);
-const fClaim2 = Fun([Address, UInt], Bool);
-const fClaim2b = Fun([Address, UInt, Address, UInt], Bool);
-const fCancel = Fun([], Bool);
-const fCancel2b = Fun([Address, UInt], Bool);
-const fGetParams = (Params) => Fun([], Params);
-const fState = (State) => Fun([], State);
-
 // TYPES
 
 /*
  * ProviderService
+ * Provider service terms for N:M subscriptions
  */
 const ProviderService = Struct([
   ["periodCount", UInt],
@@ -39,267 +25,18 @@ const ProviderService = Struct([
 
 /*
  * Subscription
+ * Subscriber service term details for N:M subscriptions
+ * Tuple of remaining and lastTime for claim
  */
 const Subscription = Tuple(UInt, UInt);
 
-/*
- * BaseDetails
- * Provider service term details for 1:1 or 1:N subscriptions
- */
-const BaseDetails = Object({
-  periodCount: UInt, // how many payments, ex 12
-  periodAmount: UInt, // how much each payment, ex 100
-  periodLength: UInt, // how long each payment, ex 30 days in blocks
-});
-
-/*
- * L1DetailsExtension
- * Provider service term details extension for 1:1 subscriptions
- */
-const L1DetailsExtension = Object({
-  token: Token, // ERC20 but need it as Token to satisfy (L1.2.2.1)
-  ttl: UInt, // time to live
-});
-
-/*
- * L1Details
- * Provider service term details for 1:1 subscriptions
- */
-const L1Details = Object({
-  ...Object.fields(BaseDetails),
-  ...Object.fields(L1DetailsExtension),
-});
-
-const L2DetailsExtension = Object({
-  token: Token,
-});
-
-const L2Details = Object({
-  ...Object.fields(BaseDetails),
-  ...Object.fields(L2DetailsExtension),
-});
-
-const L3DetailsExtension = Object({
-  token: Contract,
-});
-
-const L3Details = Object({
-  ...Object.fields(BaseDetails),
-  ...Object.fields(L3DetailsExtension),
-});
-
-const L4Details = Object({
-  ...Object.fields(L2DetailsExtension),
-});
-
-const L5Details = Object({
-  ...Object.fields(L3DetailsExtension),
-});
-
-/*
- * L1Params
- * Provider service term parameters for 1:1 subscriptions
- */
-const L1Params = Object({
-  ...Object.fields(L1Details),
-});
-
-/*
- * L2Params
- * Provider service term parameters for 1:N subscriptions
- */
-const L2Params = Object({
-  ...Object.fields(L2Details),
-});
-
-/*
- * L3Params
- * Provider service term parameters for 1:N subscriptions using ERC20 abi
- */
-const L3Params = Object({
-  ...Object.fields(L3Details),
-});
-
-/*
- * L4Params
- * Provider service term parameters for N:M subscriptions
- */
-const L4Params = Object({
-  ...Object.fields(L4Details),
-});
-
-/*
- * L5Params
- * Provider service term parameters for N:M subscriptions using ERC20 abi
- */
-const L5Params = Object({
-  ...Object.fields(L5Details),
-});
-
-/*
- * BaseState
- * Provider service term state for 1:1 or 1:N subscriptions
- */
-const BaseState = Struct([
-  ["subscriptionProvider", Address],
-  ["periodCount", UInt],
-  ["periodAmount", UInt],
-  ["periodLength", UInt],
-  ["subscriberCount", UInt],
-  ["safeAmount", UInt],
-]);
-
-// L1State None
-
-/*
- * L2StateExtension
- * Provider service term state extension for 1:N subscriptions
- * Add token to state
- */
-const L2StateExtension = Struct([["token", Token]]);
-
-/*
- * L2State
- * Provider service term state for 1:N subscriptions
- * BaseState + L2StateExtension
- */
-const L2State = Struct([
-  ...Struct.fields(BaseState),
-  ...Struct.fields(L2StateExtension),
-]);
-
-/*
- * L3StateExtension
- * Provider service term state extension for 1:N subscriptions
- * Token is a Contract (ERC20)
- */
-const L3StateExtension = Struct([["token", Contract]]);
-
-/*
- * L3State
- * Provider service term state for 1:N subscriptions
- * BaseState + L3StateExtension
- */
-const L3State = Struct([
-  ...Struct.fields(BaseState),
-  ...Struct.fields(L3StateExtension),
-]);
-
-/*
- * L4StateExtension
- * Provider service term state extension for N:M subscriptions
- */
-const L4StateExtension = Struct([
-  ["providerCount", UInt],
-  ["subscriberCount", UInt],
-  ["safeAmount", UInt],
-  ["safeSize", UInt],
-]);
-
-/*
- * L4State
- * Provider service term state for N:M subscriptions
- * L2State + L4StateExtension
- */
-const L4State = Struct([
-  ...Struct.fields(L2StateExtension),
-  ...Struct.fields(L4StateExtension),
-]);
-
-/*
- * L5State
- * Provider service term state for N:M subscriptions
- * Alias L4State
- */
-const L5State = Struct([
-  ...Struct.fields(L3StateExtension),
-  ...Struct.fields(L4StateExtension),
-]);
-
 // PARTICIPANTS
 
-const Participants = (Params) => [
+const Deployer = (Params) =>
   Participant("Deployer", {
-    ready: fReady,
-    getParams: fGetParams(Params),
-  }),
-];
-
-const L1Participants = () => [
-  Participant("Attacher", {
-    ready: fReady,
-    accept: fAccept,
-  }),
-];
-
-// VIEW
-
-const l2View = {
-  state: fState(L2State),
-  subscription: Fun([Address], Tuple(UInt, UInt)),
-};
-
-const l3View = {
-  ...l2View,
-  state: fState(L3State),
-};
-
-const l4View = {
-  state: fState(L4State),
-  subscription: Fun([Address, UInt, Address], Subscription),
-};
-
-const l5View = {
-  state: fState(L5State),
-  subscription: Fun([Address, UInt, Address], Subscription),
-};
-
-// API
-
-const l1Api = {
-  claim: fClaim,
-};
-
-const l2Api = {
-  claim: fClaim2,
-  subscribe: fSubscribe,
-  cancel: fCancel,
-};
-
-const l3Api = {
-  claim: fClaim2,
-  subscribe: fSubscribe,
-};
-
-const l4Api = {
-  claim: fClaim2b,
-  announce: fAnnounce,
-  subscribe: fSubscribe4,
-  cancel: fCancel2b,
-};
-
-const l5Api = {
-  claim: fClaim2b,
-  announce: fAnnounce,
-  subscribe: fSubscribe4,
-};
-
-// EVENT
-
-const L3Events = () => [
-  Events({
-    join: [Address, Contract, UInt, UInt, UInt],
-    redeem: [Address, Address, UInt],
-  }),
-];
-
-const L4Events = () => [
-  Events({
-    join: [Address, UInt, Address],
-    redeem: [Address, UInt, Address, UInt],
-    announcement: [Address, UInt, UInt, UInt, UInt],
-  }),
-];
+    ready: Fun([], Null),
+    getParams: Fun([], Params),
+  });
 
 // INIT
 
@@ -307,8 +44,21 @@ const L1Init = () => {
   setOptions({
     connectors: [ETH],
   });
-  const p = [...Participants(L1Params), ...L1Participants()];
-  const a = [API(l1Api)];
+  const Attacher = () =>
+    Participant("Attacher", { ready: Fun([], Null), accept: Fun([], Bool) });
+  const Params = Object({
+    periodCount: UInt, // how many payments, ex 12
+    periodAmount: UInt, // how much each payment, ex 100
+    periodLength: UInt, // how long each payment, ex 30 days in blocks
+    token: Token, // ERC20 but need it as Token to satisfy (L1.2.2.1)
+    ttl: UInt, // time to live
+  });
+  const p = [Deployer(Params), Attacher()];
+  const a = [
+    API({
+      claim: Fun([UInt], Bool),
+    }),
+  ];
   init();
   return [p, a];
 };
@@ -317,10 +67,36 @@ const L2Init = () => {
   setOptions({
     connectors: [ETH],
   });
-  const p = Participants(L2Params);
-  const v = [View(l2View)];
-  const a = [API(l2Api)];
-  const s = [L2State];
+  const State = Struct([
+    ["token", Token],
+    ["subscriptionProvider", Address],
+    ["periodCount", UInt],
+    ["periodAmount", UInt],
+    ["periodLength", UInt],
+    ["subscriberCount", UInt],
+    ["safeAmount", UInt],
+  ]);
+  const Params = Object({
+    token: Token,
+    periodCount: UInt,
+    periodAmount: UInt,
+    periodLength: UInt,
+  });
+  const p = [Deployer(Params)];
+  const v = [
+    View({
+      state: Fun([], State),
+      subscription: Fun([Address], Tuple(UInt, UInt)),
+    }),
+  ];
+  const a = [
+    API({
+      claim: Fun([Address, UInt], Bool),
+      subscribe: Fun([], Bool),
+      cancel: Fun([], Bool),
+    }),
+  ];
+  const s = [State];
   init();
   return [p, v, a, s];
 };
@@ -329,11 +105,41 @@ const L3Init = () => {
   setOptions({
     connectors: [ETH],
   });
-  const p = Participants(L3Params);
-  const v = [View(l3View)];
-  const a = [API(l3Api)];
-  const e = L3Events();
-  const s = [L3State];
+  const State = Struct([
+    ["token", Contract],
+    ["subscriptionProvider", Address],
+    ["periodCount", UInt],
+    ["periodAmount", UInt],
+    ["periodLength", UInt],
+    ["subscriberCount", UInt],
+    ["safeAmount", UInt],
+  ]);
+  const Params = Object({
+    token: Contract,
+    periodCount: UInt,
+    periodAmount: UInt,
+    periodLength: UInt,
+  });
+  const p = [Deployer(Params)];
+  const v = [
+    View({
+      state: Fun([], State),
+      subscription: Fun([Address], Tuple(UInt, UInt)),
+    }),
+  ];
+  const a = [
+    API({
+      claim: Fun([Address, UInt], Bool),
+      subscribe: Fun([], Bool),
+    }),
+  ];
+  const e = [
+    Events({
+      join: [Address, Contract, UInt, UInt, UInt],
+      redeem: [Address, Address, UInt],
+    }),
+  ];
+  const s = [State];
   init();
   return [p, v, a, e, s];
 };
@@ -342,11 +148,39 @@ const L4Init = () => {
   setOptions({
     connectors: [ETH],
   });
-  const p = Participants(L4Params);
-  const v = [View(l4View)];
-  const a = [API(l4Api)];
-  const e = L4Events();
-  const s = [L4State];
+  const State = Struct([
+    ["token", Token],
+    ["providerCount", UInt],
+    ["subscriberCount", UInt],
+    ["safeAmount", UInt],
+    ["safeSize", UInt],
+  ]);
+  const Params = Object({
+    token: Token,
+  });
+  const p = [Deployer(Params)];
+  const v = [
+    View({
+      state: Fun([], State),
+      subscription: Fun([Address, UInt, Address], Subscription),
+    }),
+  ];
+  const a = [
+    API({
+      claim: Fun([Address, UInt, Address, UInt], Bool),
+      announce: Fun([UInt, UInt, UInt], Bool),
+      subscribe: Fun([Address, UInt], Bool),
+      cancel: Fun([Address, UInt], Bool),
+    }),
+  ];
+  const e = [
+    Events({
+      join: [Address, UInt, Address],
+      redeem: [Address, UInt, Address, UInt],
+      announcement: [Address, UInt, UInt, UInt, UInt],
+    }),
+  ];
+  const s = [State];
   init();
   return [p, v, a, e, s];
 };
@@ -355,16 +189,50 @@ const L5Init = () => {
   setOptions({
     connectors: [ETH],
   });
-  const p = Participants(L5Params);
-  const v = [View(l5View)];
-  const a = [API(l5Api)];
-  const e = L4Events();
-  const s = [L5State];
+  const State = Struct([
+    ["token", Contract],
+    ["providerCount", UInt],
+    ["subscriberCount", UInt],
+    ["safeAmount", UInt],
+    ["safeSize", UInt],
+  ]);
+  const p = [
+    Deployer(
+      Object({
+        token: Contract,
+      })
+    ),
+  ];
+  const v = [
+    View({
+      state: Fun([], State),
+      subscription: Fun([Address, UInt, Address], Subscription),
+    }),
+  ];
+  const a = [
+    API({
+      claim: Fun([Address, UInt, Address, UInt], Bool),
+      announce: Fun([UInt, UInt, UInt], Bool),
+      subscribe: Fun([Address, UInt], Bool),
+    }),
+  ];
+  const e = [
+    Events({
+      join: [Address, UInt, Address],
+      redeem: [Address, UInt, Address, UInt],
+      announcement: [Address, UInt, UInt, UInt, UInt],
+    }),
+  ];
+  const s = [State];
   init();
   return [p, v, a, e, s];
 };
 
 /*
+ * -----------------------------------------------
+ * L1
+ * 1:1 subscriptions
+ * -----------------------------------------------
  * L1.1 Setup and scaffold ✅
  * L1.2 Use 2 particpants ✅
  * L1.2.1 Deployer ✅
@@ -378,6 +246,7 @@ const L5Init = () => {
  * L1.4.2 Output boolean that Attacher accepts the terms or not ✅
  * L1.4.3 Log activity ✅
  * L1.4.4 Show balance after contract ✅
+ * -----------------------------------------------
  */
 export const L1 = Reach.App(() => {
   const [[Provider, Subscriber], [a]] = L1Init();
@@ -444,6 +313,10 @@ export const L1 = Reach.App(() => {
 });
 
 /*
+ * -----------------------------------------------
+ * L2
+ * 1:N subscriptions
+ * -----------------------------------------------
  * L2.1 Use APIs and ParallelReduce ✅
  * L2.1.1 Allow many subscribers ✅
  * L2.2 Contract should start with a years worth of tokens for each subscriber ✅
@@ -461,8 +334,8 @@ export const L1 = Reach.App(() => {
  * L2.3.5.2 Withdrawal message ✅
  * L2.3.5.3 Claim message ✅
  * L2.3.5.4 Final outcome :✅
+ * -----------------------------------------------
  */
-
 export const L2 = Reach.App(() => {
   const [[Provider], [v], [a], [State]] = L2Init();
   // The first one to publish deploys the contract
@@ -621,7 +494,10 @@ export const L2 = Reach.App(() => {
 });
 
 /*
+ * -----------------------------------------------
  * L3
+ * - 1:N subscription using ERC20 token
+ * -----------------------------------------------
  * L3.1 - Use existing ERC20 token ✅ (https://sepolia.etherscan.io/address/0x460cdd0daf5c0a47627089c13979acf9f00e3000)
  * L3.1.1 - Requires ethers ✅
  * L3.1.2 - Do NOT pay any tokens into reach contract ✅
@@ -640,6 +516,7 @@ export const L2 = Reach.App(() => {
  * L3.B.1.2 - Use Solidity and Truffle to deploy ERC20 token ✅
  * L3.B.1.3 - Use own ERC20 token ✅ (https://sepolia.etherscan.io/address/0x460cdd0daf5c0a47627089c13979acf9f00e3000)
  * L3.B.1.4 - Confirm balances and allowances ✅
+ * -----------------------------------------------
  */
 
 export const L3 = Reach.App(() => {
@@ -788,8 +665,10 @@ export const L3 = Reach.App(() => {
 });
 
 /*
+ * -----------------------------------------------
  * L4
  * N:M subscriptions using contract as escrow
+ * -----------------------------------------------
  */
 export const L4 = Reach.App(() => {
   const [[Provider], [v], [a], [e], [State]] = L4Init();
@@ -983,12 +862,14 @@ export const L4 = Reach.App(() => {
 });
 
 /*
+ * -----------------------------------------------
  * L5
  * N:M subscription service using ERC20 abi
+ * -----------------------------------------------
  */
 export const L5 = Reach.App(() => {
   const [[Provider], [v], [a], [e], [State]] = L5Init();
-  
+
   Provider.only(() => {
     const { token } = declassify(interact.getParams());
   });
@@ -1169,4 +1050,4 @@ export const L5 = Reach.App(() => {
   exit();
 });
 
-export const main = L3;
+export const main = L5;
